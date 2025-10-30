@@ -5,6 +5,23 @@ const HUB_URL = "https://loopcraft.tech/eventRoomHub";
 
 export default function App() {
   const [conn, setConn] = useState(null);
+  // Default ICE servers: a public STUN and a public metered TURN for testing.
+  // For production, run your own TURN (coturn) or use a paid TURN provider.
+  const DEFAULT_ICE_SERVERS = [
+    { urls: "stun:stun.l.google.com:19302" },
+    // public metered TURN for testing only (not recommended for production)
+    {
+      urls: "turn:openrelay.metered.ca:80",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
+    // prefer TLS/443 where possible (better chance to pass strict firewalls)
+    {
+      urls: "turn:openrelay.metered.ca:443",
+      username: "openrelayproject",
+      credential: "openrelayproject",
+    },
+  ];
   const [connected, setConnected] = useState(false);
   const [room, setRoom] = useState("demo-room");
   const [name, setName] = useState("react-user");
@@ -173,7 +190,7 @@ export default function App() {
   async function createPc(remoteId) {
     if (pcsRef.current[remoteId]) return pcsRef.current[remoteId];
     const pc = new RTCPeerConnection({
-      iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
+      iceServers: DEFAULT_ICE_SERVERS,
     });
     // queue for remote candidates that arrive before remoteDescription is set
     pc._pendingRemoteCandidates = [];
