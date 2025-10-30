@@ -1,0 +1,45 @@
+node_modules
+dist
+dist-ssr
+*.local
+
+# Build output
+.env
+.env.local
+.env.production
+.env.development
+.DS_Store
+*.log
+coverage
+.nyc_output
+*.tgz
+*.tar.gz
+
+# VS Code - selective ignore
+.vscode/settings.json
+.vscode/launch.json
+.vscode/chrome/
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# IDE
+.idea
+*.swp
+*.swo
+*~
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
