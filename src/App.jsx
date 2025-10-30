@@ -48,6 +48,12 @@ export default function App() {
 
     connection.on("ReceiveOffer", async (fromConnId, sdp) => {
       try {
+        console.log(
+          "[SignalR] ReceiveOffer from",
+          fromConnId,
+          "sdp length",
+          sdp?.length
+        );
         const pc = await createPc(fromConnId);
         await pc.setRemoteDescription({ type: "offer", sdp });
         // apply any queued remote candidates received before remoteDescription
@@ -55,12 +61,24 @@ export default function App() {
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         await connection.invoke("SendAnswer", room, fromConnId, answer.sdp);
+        console.log(
+          "[SignalR] Sent Answer to",
+          fromConnId,
+          "answer sdp length",
+          answer.sdp?.length
+        );
       } catch (e) {
         console.error(e);
       }
     });
 
     connection.on("ReceiveAnswer", async (fromConnId, sdp) => {
+      console.log(
+        "[SignalR] ReceiveAnswer from",
+        fromConnId,
+        "sdp length",
+        sdp?.length
+      );
       const pc = pcsRef.current[fromConnId];
       if (pc) {
         await pc.setRemoteDescription({ type: "answer", sdp });
@@ -69,15 +87,26 @@ export default function App() {
     });
 
     connection.on("ReceiveIceCandidate", async (fromConnId, candidateJson) => {
+      console.log(
+        "[SignalR] ReceiveIceCandidate from",
+        fromConnId,
+        candidateJson && candidateJson.length,
+        "chars"
+      );
       try {
         const candidate = JSON.parse(candidateJson);
         const pc = await createPc(fromConnId);
         // if remoteDescription is set, add immediately; otherwise queue
         if (pc.remoteDescription && pc.remoteDescription.type) {
           await pc.addIceCandidate(candidate);
+          console.log(
+            "[PC] Added remote ICE candidate immediately for",
+            fromConnId
+          );
         } else {
           pc._pendingRemoteCandidates = pc._pendingRemoteCandidates || [];
           pc._pendingRemoteCandidates.push(candidate);
+          console.log("[PC] Queued remote ICE candidate for", fromConnId);
         }
       } catch (e) {
         console.error(e);
@@ -170,6 +199,7 @@ export default function App() {
               remoteId,
               candidateJson
             );
+            console.log("[SignalR] Sent ICE candidate to", remoteId);
             return;
           }
         } catch (err) {
@@ -189,7 +219,25 @@ export default function App() {
         document.getElementById("remotes").appendChild(v);
       }
       v.srcObject = e.streams[0];
+      console.log(
+        "[PC] ontrack for",
+        remoteId,
+        "stream tracks",
+        e.streams[0].getTracks().map((t) => t.kind)
+      );
     };
+    pc.oniceconnectionstatechange = () =>
+      console.log(
+        "[PC] iceConnectionState change for",
+        remoteId,
+        pc.iceConnectionState
+      );
+    pc.onconnectionstatechange = () =>
+      console.log(
+        "[PC] connectionState change for",
+        remoteId,
+        pc.connectionState
+      );
     await ensureLocalStream();
     localStreamRef.current
       .getTracks()
