@@ -17,12 +17,15 @@ export default function App() {
   const pcsRef = useRef({});
   const localStreamRef = useRef(null);
   const outgoingCandidatesRef = useRef([]); // queue of { remoteId, candidateJson }
+  const connRef = useRef(null);
 
   useEffect(() => {
     const connection = new signalR.HubConnectionBuilder()
       .withUrl(HUB_URL)
       .withAutomaticReconnect()
       .build();
+
+    connRef.current = connection;
 
     connection.on("SetRole", (role, connId, hostId) => {
       setMyId(connId);
@@ -121,6 +124,7 @@ export default function App() {
 
     return () => {
       if (connection) connection.stop();
+      connRef.current = null;
     };
   }, [room]);
 
@@ -192,8 +196,8 @@ export default function App() {
       const candidateJson = JSON.stringify(e.candidate);
       const trySend = async () => {
         try {
-          if (conn && conn.invoke) {
-            await conn.invoke(
+          if (connRef.current && connRef.current.invoke) {
+            await connRef.current.invoke(
               "SendIceCandidate",
               room,
               remoteId,
@@ -264,12 +268,19 @@ export default function App() {
         outgoingCandidatesRef.current = [];
         for (const item of queue) {
           try {
-            await conn.invoke(
-              "SendIceCandidate",
-              room,
-              item.remoteId,
-              item.candidateJson
-            );
+            if (connRef.current && connRef.current.invoke) {
+              await connRef.current.invoke(
+                "SendIceCandidate",
+                room,
+                item.remoteId,
+                item.candidateJson
+              );
+            } else {
+              console.warn(
+                "No active connection to drain ICE candidate for",
+                item.remoteId
+              );
+            }
           } catch (e) {
             console.warn("drain candidate failed", e);
           }
@@ -289,7 +300,11 @@ export default function App() {
         const pc = await createPc(remoteId);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        await conn.invoke("SendOffer", room, remoteId, offer.sdp);
+        if (connRef.current && connRef.current.invoke) {
+          await connRef.current.invoke("SendOffer", room, remoteId, offer.sdp);
+        } else {
+          console.warn("Cannot send offer: connection not ready");
+        }
       } catch (e) {
         console.error(e);
       }
