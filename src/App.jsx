@@ -16,6 +16,7 @@ export default function App() {
   const localVideoRef = useRef(null);
   const pcsRef = useRef({});
   const localStreamRef = useRef(null);
+  const outgoingCandidatesRef = useRef([]); // queue of { remoteId, candidateJson }
 
   useEffect(() => {
     const connection = new signalR.HubConnectionBuilder()
@@ -49,6 +50,8 @@ export default function App() {
       try {
         const pc = await createPc(fromConnId);
         await pc.setRemoteDescription({ type: "offer", sdp });
+        // apply any queued remote candidates received before remoteDescription
+        if (pc._applyPendingCandidates) await pc._applyPendingCandidates();
         const answer = await pc.createAnswer();
         await pc.setLocalDescription(answer);
         await connection.invoke("SendAnswer", room, fromConnId, answer.sdp);
@@ -59,14 +62,23 @@ export default function App() {
 
     connection.on("ReceiveAnswer", async (fromConnId, sdp) => {
       const pc = pcsRef.current[fromConnId];
-      if (pc) await pc.setRemoteDescription({ type: "answer", sdp });
+      if (pc) {
+        await pc.setRemoteDescription({ type: "answer", sdp });
+        if (pc._applyPendingCandidates) await pc._applyPendingCandidates();
+      }
     });
 
     connection.on("ReceiveIceCandidate", async (fromConnId, candidateJson) => {
       try {
         const candidate = JSON.parse(candidateJson);
         const pc = await createPc(fromConnId);
-        await pc.addIceCandidate(candidate);
+        // if remoteDescription is set, add immediately; otherwise queue
+        if (pc.remoteDescription && pc.remoteDescription.type) {
+          await pc.addIceCandidate(candidate);
+        } else {
+          pc._pendingRemoteCandidates = pc._pendingRemoteCandidates || [];
+          pc._pendingRemoteCandidates.push(candidate);
+        }
       } catch (e) {
         console.error(e);
       }
@@ -130,16 +142,42 @@ export default function App() {
     const pc = new RTCPeerConnection({
       iceServers: [{ urls: "stun:stun.l.google.com:19302" }],
     });
+    // queue for remote candidates that arrive before remoteDescription is set
+    pc._pendingRemoteCandidates = [];
+    pc._applyPendingCandidates = async () => {
+      while (
+        pc._pendingRemoteCandidates &&
+        pc._pendingRemoteCandidates.length
+      ) {
+        const c = pc._pendingRemoteCandidates.shift();
+        try {
+          await pc.addIceCandidate(c);
+        } catch (err) {
+          console.warn("addIceCandidate from queue failed", err);
+        }
+      }
+    };
+
     pc.onicecandidate = (e) => {
-      if (e.candidate)
-        conn
-          .invoke(
-            "SendIceCandidate",
-            room,
-            remoteId,
-            JSON.stringify(e.candidate)
-          )
-          .catch(console.error);
+      if (!e.candidate) return;
+      const candidateJson = JSON.stringify(e.candidate);
+      const trySend = async () => {
+        try {
+          if (conn && conn.invoke) {
+            await conn.invoke(
+              "SendIceCandidate",
+              room,
+              remoteId,
+              candidateJson
+            );
+            return;
+          }
+        } catch (err) {
+          console.warn("SendIceCandidate failed, queuing", err);
+        }
+        outgoingCandidatesRef.current.push({ remoteId, candidateJson });
+      };
+      trySend();
     };
     pc.ontrack = (e) => {
       let v = document.getElementById("v_" + remoteId);
@@ -169,6 +207,26 @@ export default function App() {
       await conn.invoke("JoinRoom", room, name);
       const list = await conn.invoke("GetParticipants", room);
       setParticipants(list || {});
+      // drain any queued outgoing candidates
+      if (
+        outgoingCandidatesRef.current &&
+        outgoingCandidatesRef.current.length
+      ) {
+        const queue = outgoingCandidatesRef.current.slice();
+        outgoingCandidatesRef.current = [];
+        for (const item of queue) {
+          try {
+            await conn.invoke(
+              "SendIceCandidate",
+              room,
+              item.remoteId,
+              item.candidateJson
+            );
+          } catch (e) {
+            console.warn("drain candidate failed", e);
+          }
+        }
+      }
     } catch (e) {
       console.error("start", e);
       alert("Failed to start connection: " + e.message);
