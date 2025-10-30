@@ -5,21 +5,17 @@ const HUB_URL = "https://loopcraft.tech/eventRoomHub";
 
 export default function App() {
   const [conn, setConn] = useState(null);
-  // Default ICE servers: a public STUN and a public metered TURN for testing.
-  // For production, run your own TURN (coturn) or use a paid TURN provider.
   const DEFAULT_ICE_SERVERS = [
     { urls: "stun:stun.l.google.com:19302" },
-    // public metered TURN for testing only (not recommended for production)
+    { urls: "stun:stun1.l.google.com:19302" },
     {
-      urls: "turn:openrelay.metered.ca:80",
-      username: "openrelayproject",
-      credential: "openrelayproject",
-    },
-    // prefer TLS/443 where possible (better chance to pass strict firewalls)
-    {
-      urls: "turn:openrelay.metered.ca:443",
-      username: "openrelayproject",
-      credential: "openrelayproject",
+      urls: [
+        "turn:160.25.81.144:3478",
+        "turn:160.25.81.144:3478?transport=tcp",
+        "turn:160.25.81.144:5349?transport=tcp",
+      ],
+      username: "polygo",
+      credential: "polygo2024",
     },
   ];
   const [connected, setConnected] = useState(false);
@@ -247,12 +243,18 @@ export default function App() {
         e.streams[0].getTracks().map((t) => t.kind)
       );
     };
-    pc.oniceconnectionstatechange = () =>
+    pc.oniceconnectionstatechange = () => {
       console.log(
-        "[PC] iceConnectionState change for",
-        remoteId,
-        pc.iceConnectionState
+        "[PC] iceConnectionState:",
+        pc.iceConnectionState,
+        "for",
+        remoteId
       );
+      if (pc.iceConnectionState === "failed") {
+        console.log("[!] ICE failed, restarting...");
+        pc.restartIce?.();
+      }
+    };
     pc.onconnectionstatechange = () =>
       console.log(
         "[PC] connectionState change for",
@@ -317,13 +319,30 @@ export default function App() {
         const pc = await createPc(remoteId);
         const offer = await pc.createOffer();
         await pc.setLocalDescription(offer);
-        if (connRef.current && connRef.current.invoke) {
-          await connRef.current.invoke("SendOffer", room, remoteId, offer.sdp);
-        } else {
-          console.warn("Cannot send offer: connection not ready");
+
+        // Retry 3 times
+        let retries = 3;
+        while (retries > 0) {
+          try {
+            if (connRef.current?.invoke) {
+              await connRef.current.invoke(
+                "SendOffer",
+                room,
+                remoteId,
+                offer.sdp
+              );
+              console.log("[✓] Offer sent to", remoteId);
+              break;
+            }
+          } catch (err) {
+            retries--;
+            if (retries > 0) {
+              await new Promise((r) => setTimeout(r, 500));
+            } else throw err;
+          }
         }
       } catch (e) {
-        console.error(e);
+        console.error("[✗] Failed offer for", remoteId, e);
       }
     }
   }
