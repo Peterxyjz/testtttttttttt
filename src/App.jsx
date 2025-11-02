@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as signalR from "@microsoft/signalr";
 
-const HUB_URL = "https://localhost:7057/eventroomhub";
+const HUB_URL = "https://loopcraft.tech/eventroomhub";
 
 export default function App() {
   const [conn, setConn] = useState(null);
