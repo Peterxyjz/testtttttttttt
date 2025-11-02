@@ -21,3 +21,43 @@ video {
 #remotes video {
   margin-top: 8px;
 }
+.chat-container {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid #ccc;
+  height: 200px;
+  background: #f8f8f8;
+  padding: 8px;
+}
+
+.chat-messages {
+  flex: 1;
+  overflow-y: auto;
+  margin-bottom: 8px;
+}
+
+.chat-message {
+  margin: 4px 0;
+}
+
+.chat-time {
+  font-size: 0.7rem;
+  color: #888;
+  margin-left: 6px;
+}
+
+.chat-input {
+  display: flex;
+  gap: 4px;
+}
+
+.chat-input input {
+  flex: 1;
+  padding: 6px;
+  border-radius: 4px;
+  border: 1px solid #ccc;
+}
+
+.chat-input button {
+  padding: 6px 10px;
+}
