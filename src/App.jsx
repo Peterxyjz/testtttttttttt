@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import * as signalR from "@microsoft/signalr";
 
-const HUB_URL = "https://loopcraft.tech/eventRoomHub";
+const HUB_URL = "https://loopcraft.tech/eventroomhub";
 
 export default function App() {
   const [conn, setConn] = useState(null);
@@ -26,11 +26,26 @@ export default function App() {
   const [micEnabled, setMicEnabled] = useState(true);
   const [camEnabled, setCamEnabled] = useState(true);
 
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const chatBoxRef = useRef(null);
+  const [isHost, setIsHost] = useState(false);
+  const [hostId, setHostId] = useState(null);
+  const [wavingUsers, setWavingUsers] = useState({});
+  const [isWaving, setIsWaving] = useState(false);
+
   const localVideoRef = useRef(null);
   const pcsRef = useRef({});
   const localStreamRef = useRef(null);
   const outgoingCandidatesRef = useRef([]); // queue of { remoteId, candidateJson }
   const connRef = useRef(null);
+
+  useEffect(() => {
+    if (chatBoxRef.current) {
+      chatBoxRef.current.scrollTop = chatBoxRef.current.scrollHeight;
+    }
+  }, [chatMessages]);
+
 
   useEffect(() => {
     const connection = new signalR.HubConnectionBuilder()
@@ -40,12 +55,73 @@ export default function App() {
 
     connRef.current = connection;
 
-    connection.on("SetRole", (role, connId, hostId) => {
-      setMyId(connId);
+    connection.on("MicStateChanged", (connId, enabled) => {
+      setParticipants((prev) => {
+        if (!prev[connId]) return prev;
+        return { ...prev, [connId]: { ...prev[connId], micEnabled: enabled } };
+      });
     });
 
+    connection.on("CamStateChanged", (connId, enabled) => {
+      setParticipants((prev) => {
+        if (!prev[connId]) return prev;
+        return { ...prev, [connId]: { ...prev[connId], camEnabled: enabled } };
+      });
+    });
+
+    connection.on("ToggleMicCommand", async (enabled) => {
+      await ensureLocalStream();
+      const audioTrack = localStreamRef.current.getAudioTracks()[0];
+      if (audioTrack) {
+        audioTrack.enabled = enabled;
+        setMicEnabled(enabled);
+      }
+    });
+
+    connection.on("ToggleCamCommand", async (enabled) => {
+      await ensureLocalStream();
+      const videoTrack = localStreamRef.current.getVideoTracks()[0];
+      if (videoTrack) {
+        videoTrack.enabled = enabled;
+        setCamEnabled(enabled);
+      }
+    });
+
+    connection.on("KickedFromRoom", (roomName) => {
+      alert("You have been kicked from the room by the host.");
+      leaveRoom(); // reuse your existing leave function
+    });
+    
+
+    connection.on("ReceiveChatMessage", (userName, message) => {
+      setChatMessages(prev => [...prev, { userName, message }]);
+    });
+
+
+    connection.on("SetRole", (role, connId, hostId) => {
+      setMyId(connId);
+      setHostId(hostId);
+      setIsHost(role === "host");
+    });
+
+    connection.on("ReceiveWave", (connId, userName) => {
+      setWavingUsers(prev => ({ ...prev, [connId]: userName }));
+    });
+
+    connection.on("ReceiveUnwave", (connId) => {
+      setWavingUsers(prev => {
+        const copy = { ...prev };
+        delete copy[connId];
+        return copy;
+      });
+    });
+
+
     connection.on("UserJoined", (userName, role, connId) => {
-      setParticipants((prev) => ({ ...prev, [connId]: userName }));
+      setParticipants((prev) => ({
+        ...prev,
+        [connId]: { name: userName, micEnabled: true, camEnabled: true },
+      }));
     });
 
     connection.on("UserLeft", (connId) => {
@@ -141,6 +217,27 @@ export default function App() {
     };
   }, [room]);
 
+  async function sendMessage() {
+    if (!conn || !chatInput.trim()) return;
+    try {
+      await conn.invoke("SendChatMessage", room, name, chatInput);
+      setChatInput("");
+    } catch (e) {
+      console.error("SendChatMessage error", e);
+    }
+  }
+
+  async function toggleWave() {
+    if (!connRef.current) return;
+    if (!isWaving) {
+      await connRef.current.invoke("SendWave", room);
+    } else {
+      await connRef.current.invoke("Unwave", room);
+    }
+    setIsWaving(!isWaving);
+  }
+ 
+
   async function ensureLocalStream() {
     if (!localStreamRef.current) {
       try {
@@ -182,6 +279,12 @@ export default function App() {
     track.enabled = !track.enabled;
     setCamEnabled(track.enabled);
   }
+
+  async function kickUser(targetConnId) {
+    if (!connRef.current) return;
+    await connRef.current.invoke("KickUser", room, targetConnId);
+  }
+
 
   async function createPc(remoteId) {
     if (pcsRef.current[remoteId]) return pcsRef.current[remoteId];
@@ -277,7 +380,13 @@ export default function App() {
       // join room
       await conn.invoke("JoinRoom", room, name);
       const list = await conn.invoke("GetParticipants", room);
-      setParticipants(list || {});
+      const mapped = Object.fromEntries(
+        Object.entries(list || {}).map(([id, name]) => [
+          id,
+          { name, micEnabled: true, camEnabled: true },
+        ])
+      );
+      setParticipants(mapped);
       // drain any queued outgoing candidates
       if (
         outgoingCandidatesRef.current &&
@@ -379,6 +488,34 @@ export default function App() {
         <button onClick={startCall} disabled={!connected}>
           Start Group Call
         </button>
+
+        {isHost && (
+          <>
+            <button
+              onClick={() =>
+                Object.keys(participants).forEach((id) => {
+                  if (id !== myId)
+                    conn.invoke("ToggleMic", room, id, false);
+                })
+              }
+            >
+              Mute All
+            </button>
+
+            <button
+              onClick={() =>
+                Object.keys(participants).forEach((id) => {
+                  if (id !== myId)
+                    conn.invoke("ToggleCam", room, id, false);
+                })
+              }
+            >
+              Turn Off All Cameras
+            </button>
+          </>
+        )}
+
+
         <button onClick={leaveRoom}>Leave</button>
         <button onClick={toggleMic} title="Toggle microphone">
           {micEnabled ? "Mute Mic" : "Unmute Mic"}
@@ -386,20 +523,94 @@ export default function App() {
         <button onClick={toggleCam} title="Toggle camera">
           {camEnabled ? "Turn Camera Off" : "Turn Camera On"}
         </button>
+        <button onClick={toggleWave}>
+          {isWaving ? "✋ Lower Hand" : "👋 Raise Hand"}
+        </button>
+
       </div>
       <div>My id: {myId}</div>
       <h3>Participants</h3>
       <ul>
-        {Object.entries(participants).map(([id, n]) => (
-          <li key={id}>
-            {n} ({id})
+        {Object.entries(participants).map(([id, p]) => (
+          <li key={id} style={{ marginBottom: "6px" }}>
+            <strong>{p.name}</strong> ({id})
+
+            <span style={{ marginLeft: 10 }}>
+              🎤 {p.micEnabled ? "On" : "Off"} | 📷 {p.camEnabled ? "On" : "Off"}
+            </span>
+
+            {/* Host-only controls */}
+            {isHost && id !== myId && (
+              <div style={{ display: "inline-flex", gap: "6px", marginLeft: "12px" }}>
+                <button onClick={() => conn.invoke("ToggleMic", room, id, !p.micEnabled)}>
+                  {p.micEnabled ? "Mute Mic" : "Unmute Mic"}
+                </button>
+                <button onClick={() => conn.invoke("ToggleCam", room, id, !p.camEnabled)}>
+                  {p.camEnabled ? "Turn Cam Off" : "Turn Cam On"}
+                </button>
+                <button
+                  onClick={() => kickUser(id)}
+                  style={{ color: "white", backgroundColor: "red", border: "none", padding: "4px 8px" }}
+                >
+                  Kick
+                </button>
+              </div>
+            )}
           </li>
         ))}
       </ul>
+
+
+      <h3>🙌 Hands Raised</h3>
+      <div id="waving">
+        {Object.entries(wavingUsers).length === 0 ? (
+          <p>No hands raised</p>
+        ) : (
+          <ul>
+            {Object.entries(wavingUsers).map(([id, name]) => (
+              <li key={id}>{name} 👋</li>
+            ))}
+          </ul>
+        )}
+      </div>
+
       <h3>Local</h3>
       <video ref={localVideoRef} autoPlay muted playsInline id="localVideo" />
       <h3>Remotes</h3>
       <div id="remotes"></div>
+
+      <h3>Chat</h3>
+      <div
+        ref={chatBoxRef}
+        style={{
+          border: "1px solid #ccc",
+          padding: "8px",
+          width: "300px",
+          height: "200px",
+          overflowY: "auto",
+          background: "#f9f9f9",
+        }}
+      >
+        {chatMessages.map((m, i) => (
+          <div key={i} style={{ marginBottom: "4px" }}>
+            <strong>{m.userName}:</strong> {m.message}
+          </div>
+        ))}
+      </div>
+
+
+      <div>
+        <input
+          type="text"
+          value={chatInput}
+          onChange={(e) => setChatInput(e.target.value)}
+          placeholder="Type a message..."
+        />
+        <button onClick={sendMessage}>Send</button>
+      </div>
+
+
+
     </div>
   );
 }
